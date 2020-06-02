@@ -7,7 +7,7 @@
 //
 
 import UIKit
-
+import CoreImage
 
 class PostTableViewCell: UITableViewCell {
     @IBOutlet weak var lblPostTitle: UILabel!
@@ -15,26 +15,62 @@ class PostTableViewCell: UITableViewCell {
 }
 
 class ViewController: UIViewController {
-    let urls = [
-        (title: "Building your personal page with Hexo", url: "https://uynguyen.github.io/Post-Resources/Hexo/Cover.png"),
-        (title: "Beta Test and TestFlight", url:  "https://uynguyen.github.io/Post-Resources/TestFlight/Cover.png"),
-        (title: "iOS: Mix and Match", url: "https://uynguyen.github.io/Post-Resources/MixMatch/mix-match-banner.png"),
-        (title: "Best practice: Core Data Concurrency", url: "https://uynguyen.github.io/Post-Resources/CoreDataConcurrency/banner.png"),
-        (title: "Two weeks at Fossil Group in the US", url: "https://uynguyen.github.io/Post-Resources/Fossil_Group/Fossil_Group.jpg"),
-        (title: "Integrate Google Drive to iOS app", url: "https://uynguyen.github.io/Post-Resources/GoogleDrive/GoogleDrive.png")
-    ]
+    var urls = [(title: String, url: String)]()
     
     @IBOutlet weak var tbPosts: UITableView!
+    private let queue = OperationQueue()
+    private var operations: [IndexPath: [Operation]] = [:]
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         // Do any additional setup after loading the view.
+        self.setup()
+        
         tbPosts.delegate = self
         tbPosts.dataSource = self
     }
+    
+    func setup() {
+        let inputUrl = Bundle.main.url(forResource: "input", withExtension: "json")!
+        do {
+            let data = try Data(contentsOf: inputUrl)
+            if let jsonDict = try JSONSerialization.jsonObject(with: data) as? [[String: String]] {
+                self.urls = jsonDict.map { ($0.first!.key, $0.first!.value) }
+            }
+        } catch {
+            
+        }
+    }
+    
+//    func grayScale(input: UIImage) -> UIImage? {
+//        let context = CIContext(options: nil)
+//        var inputImage = CIImage(image: input)
+//
+//        let filters = inputImage!.autoAdjustmentFilters()
+//
+//        for filter: CIFilter in filters {
+//            filter.setValue(inputImage, forKey: kCIInputImageKey)
+//            inputImage =  filter.outputImage
+//        }
+//
+//        let cgImage = context.createCGImage(inputImage!, from: inputImage!.extent)
+//        let currentFilter = CIFilter(name: "CIPhotoEffectTonal")
+//        currentFilter!.setValue(CIImage(image: UIImage(cgImage: cgImage!)), forKey: kCIInputImageKey)
+//
+//        let output = currentFilter!.outputImage
+//        let cgimg = context.createCGImage(output!, from: output!.extent)
+//        return UIImage(cgImage: cgimg!)
+//    }
 }
 
 extension ViewController: UITableViewDelegate {
-    
+    func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        if let operations = operations[indexPath] {
+            for operation in operations {
+                operation.cancel()
+            }
+        }
+    }
 }
 
 extension ViewController: UITableViewDataSource {
@@ -48,17 +84,45 @@ extension ViewController: UITableViewDataSource {
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "CellId", for: indexPath) as! PostTableViewCell
-        let data = urls[indexPath.row]
-        URLSession.shared.dataTask(with: URL(string: data.url)!, completionHandler: { (data, res, error) in
-            guard error == nil,
-                let data = data else { return }
-            DispatchQueue.main.async {
-                cell.imgPostImage.contentMode = .scaleToFill
-                cell.imgPostImage.image = UIImage(data: data)
-            }
-        }).resume()
+        let input = urls[indexPath.row]
         
-        cell.lblPostTitle.text = data.title
+//        Using GDC
+//        DispatchQueue.global(qos: .background).async {
+//            URLSession.shared.dataTask(with: URL(string: input.url)!, completionHandler: { (data, res, error) in
+//                guard error == nil,
+//                    let data = data,
+//                    let image = UIImage(data: data) else { return }
+//
+//                let filteredImage = self.grayScale(input: image)
+//                DispatchQueue.main.async {
+//                    cell.lblPostTitle.text = input.title
+//                    cell.imgPostImage.image = filteredImage
+//                }
+//            }).resume()
+//        }
+        
+        
+//      Using Operation instead
+        let downloadOpt = DownloadImageOperation(url: URL(string: input.url)!)
+        let grayScaleOpt = ImageFilterOperation()
+
+        grayScaleOpt.addDependency(downloadOpt)
+        grayScaleOpt.completionBlock = {
+            DispatchQueue.main.async {
+                cell.lblPostTitle.text = input.title
+                cell.imgPostImage.image = grayScaleOpt.processedImage
+            }
+        }
+        self.queue.addOperation(downloadOpt)
+        self.queue.addOperation(grayScaleOpt)
+
+        if let existingOperations = operations[indexPath] {
+            for operation in existingOperations {
+                operation.cancel()
+            }
+        }
+        operations[indexPath] = [grayScaleOpt, downloadOpt]
+        
         return cell
     }
 }
